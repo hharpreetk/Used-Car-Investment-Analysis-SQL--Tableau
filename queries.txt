@@ -1,0 +1,492 @@
+####### DOWNLOAD DATASET AND COPY AT HDFS
+
+wget https://www.dropbox.com/s/sm802eyucqb8cgb/cars.csv
+
+
+hadoop fs -copyFromLocal cars.csv /BigData/Assignment4/.
+
+## CHECK IF DATASET IS IN HDFS
+Hadoop fs -ls /BigData/Assignment4
+
+
+######### CREATE DATABASE AND TABLES
+
+CREATE DATABASE cars_db; 
+USE cars_db; 
+
+######### CREATE A TABLEIN THISCASE IT WILL BE EXTERNALTONOT LINK THE ORIGINAL DATASET
+##########################################################################################	
+
+CREATE EXTERNAL TABLE IF NOT EXISTS cars (
+maker STRING,
+model STRING,
+mileage FLOAT,
+manufacture_year INT,
+engine_displacement FLOAT,
+engine_power STRING,
+body_type STRING,
+color_slug STRING,
+stk_year FLOAT,
+transmission STRING,
+door_count INT,
+seat_count INT,
+fuel_type STRING, 
+date_created DATE, 
+date_last_seen DATE,
+price_eur FLOAT)  
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+LOCATION '/PROG3250/Assignment4/'
+TBLPROPERTIES ("skip.header.line.count"="1", 'creator'='Saber', 'created_on'='2020-07-21', 'description'='dataset for classfied Ads of cars in Germany and Czech Republic');
+
+-- this command MOVES the data from the Assignment4 folder into the location folder specified in the Metadata
+
+hive> LOAD DATA INPATH '/BigData/Assignment4' INTO TABLE cars;
+
+
+###### GENERAL REVIEW OF DATASET
+################################
+DESCRIBE FORMATTED cars;
+SELECT COUNT(*) FROM cars;  7105824
+
+#### CHECK VALUES OF COLUMNS
+############################
+### maker
+SELECT maker, COUNT(maker) records FROM cars
+GROUP BY maker;
+
+OK
+	1037830
+bmw	533462
+chevrolet	41712
+citroen	243826
+honda	52450
+infinity	1012
+land-rover	3442
+nissan	136016
+opel	435416
+porsche	48634
+skoda	627660
+subaru	20214
+volvo	96542
+audi	497204
+lexus	7822
+seat	149290
+smart	65836
+chrysler	18592
+dacia	4048
+fiat	265338
+hummer	1462
+hyundai	161204
+isuzu	2854
+jaguar	20112
+jeep	34150
+lamborghini	1108
+lancia	27518
+maserati	3824
+mercedes-benz	503932
+rover	41222
+toyota	145816
+alfa-romeo	9468
+aston-martin	44
+bentley	2162
+dodge	10446
+ford	481112
+kia	97214
+lotus	852
+mazda	91332
+mini	71356
+mitsubishi	56926
+peugeot	184260
+renault	213662
+rolls-royce	92
+suzuki	62368
+tesla	470
+volkswagen	594512
+
+
+SELECT maker, COUNT(maker) records FROM clean
+WHERE maker=''
+GROUP BY maker;
+
+### model
+SELECT model, COUNT(model) records FROM clean
+WHERE model=''
+GROUP BY model;
+
+CREATE TABLE IF NOT EXISTS cars_WithMakerModel AS
+SELECT * FROM cars
+WHERE model != '' AND maker!=''; 
+
+SELECT COUNT(*) FROM cars_WithMakerModel;
+OK
+4839102
+
+
+### mileage 
+SELECT mileage, MAX(mileage) records FROM cars_WithMakerModel
+WHERE mileage=''
+GROUP BY mileage;
+
+CREATE TABLE IF NOT EXISTS clean2 AS
+SELECT * FROM cars_WithMakerModel
+WHERE mileage<=250000;
+
+SELECT COUNT(*) FROM clean2;
+
+### manufacture_year
+SELECT manufacture_year, COUNT (manufacture_year)
+FROM clean2
+GROUP BY manufacture_year;
+
+WHERE manufacture_year>2017
+GROUP BY manufacture_year; 
+
+CREATE TABLE IF NOT EXISTS clean AS
+SELECT *
+FROM clean2
+WHERE manufacture_year>=1908;
+
+INSERT OVERWRITE TABLE clean
+SELECT *
+FROM clean2
+WHERE manufacture_year>=1908;
+
+### engine_displacement and engine_power
+SELECT engine_power, COUNT (engine_power)
+FROM clean
+GROUP BY engine_power; 
+
+### body_type
+SELECT body_type, COUNT (body_type)
+FROM clean
+GROUP BY body_type; 
+
+### color_slug
+SELECT color_slug, COUNT (color_slug)
+FROM clean
+GROUP BY color_slug; 
+
+### stk_year
+SELECT stk_year, COUNT (stk_year)
+FROM clean
+GROUP BY stk_year; 
+
+SELECT engine_displacement, COUNT (engine_displacement)
+FROM clean
+GROUP BY engine_displacement; 
+
+INSERT OVERWRITE TABLE clean
+SELECT *
+FROM clean
+WHERE stk_year>=1908 AND stk_year <=2017;
+
+### door_count
+SELECT door_count, COUNT (door_count)
+FROM clean
+GROUP BY door_count; 
+
+INSERT OVERWRITE TABLE clean
+SELECT * FROM clean
+WHERE door_count <=6;
+
+###seat_count
+SELECT seat_count, COUNT (seat_count)
+FROM clean
+GROUP BY seat_count; 
+
+INSERT OVERWRITE TABLE clean
+SELECT * FROM clean
+WHERE seat_count <=12;
+
+###fuel_type
+SELECT fuel_type, COUNT (fuel_type)
+FROM clean
+GROUP BY fuel_type; 
+
+###price_eur
+SELECT price_eur, COUNT (price_eur)
+FROM clean
+GROUP BY price_eur; 
+
+INSERT OVERWRITE TABLE clean
+SELECT * FROM clean
+WHERE model!="";
+
+SELECT COUNT(*) FROM clean; # 266920
+
+### Save data into a local directory For visualization ####
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/cleanQuery/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT * FROM clean;
+
+########################################  Analysis #############
+################################################################
+#### crete buckets with NTILE to separate the first 5% of top to bottom
+#### remove outliers of prices 
+######################################
+
+CREATE TABLE IF NOT EXISTS percen AS 
+SELECT *, NTILE(20) OVER (ORDER BY price_eur) AS bucket FROM clean;
+
+CREATE TABLE IF NOT EXISTS percen2 AS 
+SELECT * FROM percen
+WHERE bucket BETWEEN 2 AND 19;
+
+
+SELECT COUNT(*) FROM percen2;  # 
+
+##### Relation between maker, models and price ###############
+###############################################################
+
+CREATE TABLE IF NOT EXISTS makerprice AS
+SELECT maker,model,
+MIN(price_eur) AS minprice,
+MAX(price_eur) AS maxprice, 
+ROUND(AVG(price_eur),2) AS averageprice ,
+COUNT(model) modelCount,
+ROUND(SUM(price_eur),2) AS totalprice
+FROM clean
+GROUP BY maker, model
+ORDER BY averageprice DESC;
+
+SELECT COUNT(*) FROM makerprice;  671
+### Top 20 maker models sold with high average price ****
+
+SELECT maker, model, averageprice
+FROM makerprice
+ORDER BY averageprice DESC
+LIMIT 20;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/modelmaker_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT maker, model, averageprice
+FROM makerprice
+ORDER BY averageprice DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/modelmaker_price20/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT maker, model, averageprice
+FROM makerprice
+ORDER BY averageprice DESC
+LIMIT 20;
+
+# query for all models order by count 
+
+
+####### TOP 5 Manufacturers
+
+### highest number of sales with average manufacturing year and average price
+SELECT maker, 
+CAST(AVG(manufacture_year)AS INT) AS year, 
+ROUND(AVG(price_eur),2) AS totalpric, 
+COUNT(model) AS numModel
+FROM clean
+GROUP BY maker
+ORDER BY numModel DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/modelmaker_cou_manufacture_year/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT maker, 
+CAST(AVG(manufacture_year)AS INT) AS year, 
+ROUND(AVG(price_eur),2) AS totalpric, 
+COUNT(maker) AS numMaker
+FROM clean
+GROUP BY maker
+ORDER BY numMaker DESC;
+
+### Number of high price sales with average manufacturing year
+
+SELECT maker, 
+CAST(AVG(manufacture_year)AS INT) AS year, 
+COUNT(model) AS numModel,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM clean
+GROUP BY maker
+ORDER BY totalpric DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/modelmaker_price_manufacture_year/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT maker, 
+CAST(AVG(manufacture_year)AS INT) AS year, 
+COUNT(maker) AS numMaker,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM clean
+GROUP BY maker
+ORDER BY totalpric DESC;
+
+SELECT maker, 
+CAST(AVG(manufacture_year)AS INT) AS year, 
+COUNT(maker) AS numMaker,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM clean
+GROUP BY maker
+ORDER BY totalpric DESC
+LIMIT 20;
+
+
+###### fueltype with price	
+###################################
+# create table without non fuel type
+
+CREATE TABLE IF NOT EXISTS tempor AS 
+SELECT * 
+FROM clean
+WHERE fuel_type !='';
+
+
+### generalview
+
+## Average price of cars for each fuel type
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/fuel_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+GROUP BY fuel_type
+ORDER BY totalpric DESC;
+
+SELECT fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+GROUP BY fuel_type
+ORDER BY totalpric DESC;
+
+## Average price of cars for each transmission type
+
+##### withTramission
+SELECT fuel_type, transmission,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man'
+GROUP BY transmission,fuel_type
+ORDER BY totalpric DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/fuel_transmission_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT fuel_type, transmission,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man'
+GROUP BY transmission,fuel_type
+ORDER BY totalpric DESC;
+
+
+#### count volume per fueltype
+SELECT fuel_type,
+COUNT (price_eur) AS cou,
+ROUND((COUNT(price_eur)/949872)*100,2)AS vol
+FROM tempor
+GROUP BY fuel_type
+ORDER BY cou DESC
+
+## Average price of cars for each fuel type and manufacturing year
+
+#comparing byyear
+SELECT manufacture_year, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE fuel_type='gasoline' OR fuel_type='diesel'
+GROUP BY manufacture_year, fuel_type
+ORDER BY manufacture_year, totalpric DESC
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/fuel_manufacture_year_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT manufacture_year, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE fuel_type='gasoline' OR fuel_type='diesel'
+GROUP BY manufacture_year, fuel_type
+ORDER BY manufacture_year, totalpric DESC;
+
+#including the models 
+
+## Average sales made by each model and its fuel type
+
+SELECT model, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man'
+GROUP BY model, fuel_type;
+
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/model_fueltype/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT model, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man'
+GROUP BY model, fuel_type;
+
+### transmissionAnnalysis
+
+## Average price by each transmission and fuel type
+
+SELECT transmission, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man' AND fuel_type= 'gasoline' OR fuel_type= 'diesel'
+GROUP BY transmission, fuel_type
+ORDER BY totalpric DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/transmission_price_fueltype/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT transmission, fuel_type,
+ROUND(AVG(price_eur),2)AS totalpric
+FROM tempor
+WHERE transmission= 'auto' OR transmission= 'man' AND fuel_type= 'gasoline' OR fuel_type= 'diesel'
+GROUP BY transmission, fuel_type
+ORDER BY totalpric DESC;
+
+### manufacturedyear
+
+## Average price by each manufacture year
+
+SELECT manufacture_year,
+ROUND (AVG(price_eur),2) AS price,
+COUNT(manufacture_year) AS cou
+FROM percen2
+GROUP BY manufacture_year
+ORDER BY cou DESC;
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/manufacture_year_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT manufacture_year,
+ROUND (AVG(price_eur),2) AS price,
+COUNT(manufacture_year) AS cou
+FROM percen2
+GROUP BY manufacture_year
+ORDER BY cou DESC;
+
+
+#### write files outside of hive for analysis
+####################################################
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/maker_max_min_avg_price/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT maker, MAX(price_eur), MIN (price_eur), AVG(price_eur)
+FROM clean
+GROUP BY maker; 
+
+
+
+##### REMOVE COLUMNS OF TABLE (AT THE END ONLY 10 COLUMSN WILL BE USED) 
+####################################
+
+ALTER TABLE clean REPLACE COLUMNS(maker STRING,
+model STRING,
+mileage FLOAT,
+manufacture_year INT, 
+body_type STRING,
+transmission STRING,
+door_count INT,
+seat_count INT,
+fuel_type STRING, 
+price_eur FLOAT); 
+
+INSERT OVERWRITE LOCAL DIRECTORY '/home/cloudera/BigData/Assignment4/cars/'
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','
+SELECT * FROM clean;
+
+
